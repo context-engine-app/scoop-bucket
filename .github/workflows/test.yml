@@ -1,0 +1,159 @@
+name: Scoop
+
+on:
+  pull_request:
+    paths:
+      - bucket/**
+      - .github/workflows/test.yml
+  push:
+    branches:
+      - main
+    paths:
+      - bucket/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scoop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: native-windows-x86_64
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Check out the bucket
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Validate the manifest contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "bucket/context-engine.json"
+          if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+              throw "bucket/context-engine.json is missing"
+          }
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 20
+          $properties = @($manifest.PSObject.Properties.Name | Sort-Object)
+          $expectedProperties = @("architecture", "bin", "description", "homepage", "license", "version")
+          if (Compare-Object $properties $expectedProperties) {
+              throw "manifest contains missing or unexpected top-level fields"
+          }
+          $architectures = @($manifest.architecture.PSObject.Properties.Name)
+          if ($architectures.Count -ne 1 -or $architectures[0] -ne "64bit") {
+              throw "manifest must declare only the 64bit architecture"
+          }
+          $architecture = $manifest.architecture."64bit"
+          $architectureProperties = @($architecture.PSObject.Properties.Name | Sort-Object)
+          $expectedArchitectureProperties = @("hash", "url")
+          if (Compare-Object $architectureProperties $expectedArchitectureProperties) {
+              throw "architecture.64bit contains missing or unexpected fields"
+          }
+          if ($manifest.version -notmatch "^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$") {
+              throw "manifest version must be stable semantic version"
+          }
+          $expectedUrl = (
+              "https://github.com/context-engine-app/context-engine-mcp/releases/download/" +
+              "v$($manifest.version)/context-engine-x86_64-pc-windows-msvc.zip"
+          )
+          if ($architecture.url -isnot [string] -or $architecture.url -cne $expectedUrl) {
+              throw "architecture.64bit URL is not canonical"
+          }
+          if ($architecture.hash -isnot [string] -or $architecture.hash -cnotmatch "^[0-9a-f]{64}$") {
+              throw "architecture.64bit hash must be lowercase SHA-256"
+          }
+          if ($manifest.license -ne "Proprietary") {
+              throw "manifest license must be Proprietary"
+          }
+          $binJson = ConvertTo-Json -InputObject $manifest.bin -Compress -Depth 5
+          if ($binJson -ne '[["context-engine.exe","context-engine"]]') {
+              throw "manifest bin mapping is not canonical"
+          }
+
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Join-Path $env:RUNNER_TEMP "install-scoop.ps1"
+          Invoke-WebRequest -Uri https://get.scoop.sh -OutFile $installer
+          Unblock-File -LiteralPath $installer
+          & $installer
+          if (-not $?) {
+              throw "Scoop installation failed"
+          }
+
+      - name: Install and verify the released payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          scoop bucket add context-engine $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+          scoop install context-engine/context-engine
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
+          $manifest = Get-Content -LiteralPath bucket/context-engine.json -Raw | ConvertFrom-Json -Depth 20
+          $expectedVersion = "context-engine $($manifest.version)"
+          $actualVersion = (& context-engine --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualVersion -ne $expectedVersion) {
+              throw "installed version output does not match $expectedVersion"
+          }
+
+          Remove-Item Env:CONTEXT_ENGINE_API_KEY -ErrorAction SilentlyContinue
+          $PSNativeCommandUseErrorActionPreference = $false
+          & context-engine license-check --force-online
+          $licenseStatus = $LASTEXITCODE
+          $PSNativeCommandUseErrorActionPreference = $true
+          if ($licenseStatus -ne 70) {
+              throw "missing-key license check must exit with status 70"
+          }
+
+          $archive = Join-Path $env:RUNNER_TEMP "context-engine.zip"
+          $url = $manifest.architecture."64bit".url
+          $expectedHash = $manifest.architecture."64bit".hash
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+              throw "downloaded archive hash does not match the manifest"
+          }
+          $extraction = Join-Path $env:RUNNER_TEMP "context-engine-archive"
+          Expand-Archive -LiteralPath $archive -DestinationPath $extraction
+          $archivedHash = (
+              Get-FileHash -LiteralPath (Join-Path $extraction "context-engine.exe") -Algorithm SHA256
+          ).Hash
+          $installedDirectory = (& scoop prefix context-engine | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+          $installedPath = Join-Path $installedDirectory "context-engine.exe"
+          $installedHash = (Get-FileHash -LiteralPath $installedPath -Algorithm SHA256).Hash
+          if ($installedHash -ne $archivedHash) {
+              throw "installed executable differs from the immutable archive"
+          }
+
+      - name: Uninstall without deleting user data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stateDirectory = Join-Path $HOME ".context-engine"
+          $sentinel = Join-Path $stateDirectory "scoop-uninstall-sentinel"
+          New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
+          Set-Content -LiteralPath $sentinel -Value "preserved" -NoNewline
+          scoop uninstall context-engine
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+          if (Get-Command context-engine -ErrorAction SilentlyContinue) {
+              throw "context-engine remains available after Scoop uninstall"
+          }
+          if ((Get-Content -LiteralPath $sentinel -Raw) -ne "preserved") {
+              throw "Scoop uninstall removed Context Engine user data"
+          }
