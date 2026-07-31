@@ -1,0 +1,13 @@
+{
+  "version": "0.1.0",
+  "description": "Context Engine command-line interface",
+  "homepage": "https://context-engine.app",
+  "license": "Proprietary",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/context-engine-app/context-engine-mcp/releases/download/v0.1.0/context-engine-x86_64-pc-windows-msvc.zip",
+      "hash": "b955e0997209062d0d097263c17817a440eb5796c8b2535c652f6c91a2240dfd"
+    }
+  },
+  "bin": [["context-engine.exe", "context-engine"]]
+}
