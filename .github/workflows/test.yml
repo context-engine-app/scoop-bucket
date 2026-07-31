@@ -96,11 +96,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          scoop bucket add context-engine $env:GITHUB_WORKSPACE
-          if ($LASTEXITCODE -ne 0) {
-              exit $LASTEXITCODE
-          }
-          scoop install context-engine/context-engine
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "bucket/context-engine.json"
+          scoop install $manifestPath
           if ($LASTEXITCODE -ne 0) {
               exit $LASTEXITCODE
           }
