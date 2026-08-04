@@ -1,13 +1,16 @@
 {
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Context Engine command-line interface",
   "homepage": "https://context-engine.app",
   "license": "Proprietary",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/context-engine-app/context-engine-mcp/releases/download/v0.1.1/context-engine-x86_64-pc-windows-msvc.zip",
-      "hash": "2965db886437a226e9429ffc04bef8556511d91137b548695644799f39165bc4"
+      "url": "https://github.com/context-engine-app/context-engine-mcp/releases/download/v0.2.0/context-engine-x86_64-pc-windows-msvc.zip",
+      "hash": "c9acdca0030cd310f70a5057f42cc01763c3785cd513a69202bff264be2c97ce"
     }
   },
-  "bin": [["context-engine.exe", "context-engine"]]
+  "bin": [["context-engine.exe", "context-engine"]],
+  "post_install": [
+    "$marker = Join-Path $dir 'context-engine-installation.json'; [IO.File]::WriteAllText($marker, '{\"schema_version\":1,\"installation_method\":\"scoop\",\"distribution_repository\":\"context-engine-app/context-engine-mcp\"}' + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))"
+  ]
 }
