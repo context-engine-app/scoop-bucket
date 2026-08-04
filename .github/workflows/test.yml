@@ -40,7 +40,7 @@ jobs:
           }
           $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 20
           $properties = @($manifest.PSObject.Properties.Name | Sort-Object)
-          $expectedProperties = @("architecture", "bin", "description", "homepage", "license", "version")
+          $expectedProperties = @("architecture", "bin", "description", "homepage", "license", "post_install", "version")
           if (Compare-Object $properties $expectedProperties) {
               throw "manifest contains missing or unexpected top-level fields"
           }
